@@ -1,27 +1,34 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/gob"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	ui "github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
 
 	"github.com/ikawaha/kagome/tokenizer"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
 	kagome tokenizer.Tokenizer
 
+	db *sql.DB
+
 	grid *ui.Grid
 
-	miniTokenList  []*miniToken
+	miniTokenList  []miniToken
 	nounTokenList  []*miniToken
 	verbTokenList  []*miniToken
 	adjTokenList   []*miniToken
@@ -34,20 +41,31 @@ var (
 	selectedWordWidget *widgets.List
 	allListWidgets     []*widgets.List
 	focusedWidget      *widgets.List
+
+	knownWordList     = []string{}
+	ankiWordList      = []string{}
+	displayKnownWords = false
 )
 
 type miniToken struct {
 	Lemma string
 	Pos   string
+	Yomi  string
 	Count int
 	Goshu string
 }
 
-func tokenFilter(tokens []*miniToken, f func(token *miniToken) bool) []*miniToken {
+func (t *miniToken) SimpleLemma() string {
+	return strings.Split(t.Lemma, "-")[0]
+}
+
+func tokenFilter(tokens []miniToken, f func(token miniToken) bool) []*miniToken {
 	results := make([]*miniToken, 0)
 	for _, v := range tokens {
 		if f(v) {
-			results = append(results, v)
+			func(v miniToken) {
+				results = append(results, &v)
+			}(v)
 		}
 	}
 	return results
@@ -57,9 +75,10 @@ func analyzeText(s string) {
 	lemmaMap := map[string]*miniToken{}
 	tokens := kagome.Analyze(s, tokenizer.Normal)
 	for _, token := range tokens {
-		if token.Class == tokenizer.DUMMY || token.Class == tokenizer.UNKNOWN {
-			// BOS: Begin Of Sentence, EOS: End Of Sentence.
-			//fmt.Printf("%s\n", token.Surface)
+		if token.Class == tokenizer.DUMMY || token.Class == tokenizer.UNKNOWN || token.Pos() == "空白" {
+			continue
+		}
+		if strings.Contains(token.Pos(), "記号") {
 			continue
 		}
 		features := token.Features()
@@ -67,17 +86,28 @@ func analyzeText(s string) {
 			fmt.Println(token)
 			continue
 		}
+		// features 内容はこっちに参照 https://hayashibe.jp/tr/mecab/dictionary/unidic/field
 		lemma := features[7]
+		lemmaRunes := []rune(lemma)
+		// filter single hiragana or katakana
+		if len(lemmaRunes) == 1 && (unicode.In(lemmaRunes[0], unicode.Hiragana) || unicode.In(lemmaRunes[0], unicode.Katakana)) {
+			continue
+		}
 		if _, ok := lemmaMap[lemma]; ok {
 			lemmaMap[lemma].Count++
 		} else {
-			lemmaMap[lemma] = &miniToken{lemma, token.Pos(), 1, features[12]}
+			lemmaMap[lemma] = &miniToken{lemma, token.Pos(), features[6], 1, features[12]}
 		}
 	}
 	for _, v := range lemmaMap {
-		miniTokenList = append(miniTokenList, v)
+		miniTokenList = append(miniTokenList, *v)
 	}
 	sort.Slice(miniTokenList, func(i, j int) bool { return miniTokenList[i].Count > miniTokenList[j].Count })
+
+	dataFile, _ := os.Create("file.gob")
+	defer dataFile.Close()
+	enc := gob.NewEncoder(dataFile)
+	enc.Encode(miniTokenList)
 }
 
 func initKagome() {
@@ -85,20 +115,21 @@ func initKagome() {
 }
 
 func setupWidgets() {
-	nounTokenList = tokenFilter(miniTokenList, func(t *miniToken) bool { return strings.Contains(t.Pos, "名詞") })
-	verbTokenList = tokenFilter(miniTokenList, func(t *miniToken) bool { return t.Pos == "動詞" })
-	adjTokenList = tokenFilter(miniTokenList, func(t *miniToken) bool { return t.Pos == "形容詞" || t.Pos == "形状詞" })
-	otherTokenList = tokenFilter(miniTokenList, func(t *miniToken) bool {
-		return t.Pos != "形容詞" && t.Pos != "形状詞" && t.Pos != "動詞" && !strings.Contains(t.Pos, "記号") && !strings.Contains(t.Pos, "名詞")
+	nounTokenList = tokenFilter(miniTokenList, func(t miniToken) bool { return strings.Contains(t.Pos, "名詞") })
+	verbTokenList = tokenFilter(miniTokenList, func(t miniToken) bool { return t.Pos == "動詞" })
+	adjTokenList = tokenFilter(miniTokenList, func(t miniToken) bool { return t.Pos == "形容詞" || t.Pos == "形状詞" })
+	otherTokenList = tokenFilter(miniTokenList, func(t miniToken) bool {
+		return t.Pos != "形容詞" && t.Pos != "形状詞" && t.Pos != "動詞" && !strings.Contains(t.Pos, "名詞")
 	})
 
-	nounWidget = newTokenWidget("名詞", nounTokenList, false)
-	verbWidget = newTokenWidget("動詞", verbTokenList, false)
-	adjWidget = newTokenWidget("形容形状詞", adjTokenList, false)
-	otherWidget = newTokenWidget("その他", otherTokenList, true)
+	nounWidget = newTokenWidget("名詞")
+	verbWidget = newTokenWidget("動詞")
+	adjWidget = newTokenWidget("形容形状詞")
+	otherWidget = newTokenWidget("その他")
+	setupWidgetRows()
 
 	selectedWordWidget = widgets.NewList()
-	selectedWordWidget.Title = "単語帳"
+	selectedWordWidget.Title = "知ってる単語"
 	selectedWordWidget.Rows = []string{}
 	selectedWordWidget.WrapText = true
 
@@ -106,6 +137,20 @@ func setupWidgets() {
 
 	// focus nounWidget by default
 	focusWidget("1")
+}
+
+func setupWidgetRows() {
+	applyRowsToWidget(nounWidget, nounTokenList, false)
+	applyRowsToWidget(verbWidget, verbTokenList, false)
+	applyRowsToWidget(adjWidget, adjTokenList, false)
+	applyRowsToWidget(otherWidget, otherTokenList, true)
+}
+
+func setupKnownWordList() {
+	bytes, err := ioutil.ReadFile("known_words.txt")
+	if err == nil {
+		knownWordList = strings.Split(string(bytes), "\n")
+	}
 }
 
 func setupGrid() {
@@ -130,22 +175,38 @@ func setupGrid() {
 	)
 }
 
-func newTokenWidget(title string, tokens []*miniToken, verbose bool) *widgets.List {
+func newTokenWidget(title string) *widgets.List {
 	l := widgets.NewList()
 	l.Title = title
-	l.Rows = func(tl []*miniToken) []string {
+	l.WrapText = true
+	return l
+}
+
+func applyRowsToWidget(w *widgets.List, tokens []*miniToken, verbose bool) {
+	w.Rows = func(tl []*miniToken) []string {
 		rv := make([]string, 0)
 		for _, t := range tl {
+			if !displayKnownWords {
+				// do not append t to rv if t.Lemma in knownWordList
+				if func(t *miniToken) bool {
+					for _, v := range append(knownWordList, ankiWordList...) {
+						if v == t.SimpleLemma() {
+							return true
+						}
+					}
+					return false
+				}(t) {
+					continue
+				}
+			}
 			if verbose {
-				rv = append(rv, fmt.Sprintf("%s (%s・%s・%d)", t.Lemma, t.Pos, t.Goshu, t.Count))
+				rv = append(rv, fmt.Sprintf("%s (%s・%s・%s・%d)", t.SimpleLemma(), t.Yomi, t.Pos, t.Goshu, t.Count))
 			} else {
-				rv = append(rv, fmt.Sprintf("%s (%s・%d)", t.Lemma, t.Goshu, t.Count))
+				rv = append(rv, fmt.Sprintf("%s (%s・%s・%d)", t.SimpleLemma(), t.Yomi, t.Goshu, t.Count))
 			}
 		}
 		return rv
 	}(tokens)
-	l.WrapText = true
-	return l
 }
 
 func focusWidget(opt string) {
@@ -162,9 +223,11 @@ func focusWidget(opt string) {
 	focusedWidget.TextStyle = ui.NewStyle(ui.ColorGreen)
 }
 
-func toggleWord(w string) {
+func toggleWord(_w string) {
+	w := strings.Split(_w, " ")[0]
 	rowsPtr := &(selectedWordWidget.Rows)
-	for idx, v := range *rowsPtr {
+	for idx, _v := range *rowsPtr {
+		v := strings.Split(_v, " ")[0]
 		if v == w {
 			*rowsPtr = append((*rowsPtr)[:idx], (*rowsPtr)[idx+1:]...)
 			return
@@ -177,8 +240,43 @@ func saveSelectedWords() {
 	if len(selectedWordWidget.Rows) == 0 {
 		return
 	}
-	bytes := []byte(strings.Join(selectedWordWidget.Rows, "\n"))
-	ioutil.WriteFile("words.txt", bytes, 0644)
+	knownWordMap := make(map[string]struct{})
+	for _, w := range knownWordList {
+		knownWordMap[w] = struct{}{}
+	}
+	needAppendWordList := make([]string, 0)
+	for _, knownWord := range selectedWordWidget.Rows {
+		if _, ok := knownWordMap[knownWord]; !ok {
+			needAppendWordList = append(needAppendWordList, knownWord)
+		}
+	}
+	f, _ := os.OpenFile("known_words.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer f.Close()
+	f.WriteString(strings.Join(needAppendWordList, "\n"))
+	f.WriteString("\n")
+}
+
+func saveUnknownWords() {
+	knownWordMap := make(map[string]struct{})
+	for _, wl := range [][]string{knownWordList, ankiWordList, selectedWordWidget.Rows} {
+		for _, w := range wl {
+			knownWordMap[w] = struct{}{}
+		}
+	}
+	unknownWords := make([]string, 0)
+	for _, t := range miniTokenList {
+		if _, ok := knownWordMap[t.SimpleLemma()]; !ok {
+			unknownWords = append(unknownWords, t.SimpleLemma())
+		}
+	}
+	ioutil.WriteFile("unknown_words.txt", []byte(strings.Join(unknownWords, "\n")+"\n"), 0644)
+}
+
+func hackScrollCrash(scrollFunc func()) {
+	if focusedWidget.SelectedRow > len(focusedWidget.Rows)-1 {
+		return
+	}
+	scrollFunc()
 }
 
 func eventLoop() {
@@ -191,9 +289,10 @@ func eventLoop() {
 			focusWidget(e.ID)
 		case "q", "<C-c>":
 			saveSelectedWords()
+			saveUnknownWords()
 			return
 		case "j", "<Down>":
-			focusedWidget.ScrollDown()
+			hackScrollCrash(focusedWidget.ScrollDown)
 		case "k", "<Up>":
 			focusedWidget.ScrollUp()
 		case "<C-d>":
@@ -204,6 +303,9 @@ func eventLoop() {
 			focusedWidget.ScrollPageDown()
 		case "<C-b>":
 			focusedWidget.ScrollPageUp()
+		case "T":
+			displayKnownWords = !displayKnownWords
+			setupWidgetRows()
 		case "g":
 			if previousKey == "g" {
 				focusedWidget.ScrollTop()
@@ -231,25 +333,36 @@ func eventLoop() {
 	}
 }
 
+func syncAnkiWords() {
+	dbPath := filepath.Join("/home/yuanji/.local/share/Anki2/Yuanji/", "collection.anki2")
+	db, _ = sql.Open("sqlite3", dbPath)
+	deckID := getAnkiDeckID("日本語")
+	ankiWordList = getWordsByAnkiDeckID(deckID)
+}
+
 func main() {
 
 	fileName := flag.String("f", "", "file name")
 	flag.Parse()
-	file, err := os.Open(*fileName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-	bytes, err := ioutil.ReadAll(file)
+	bytes, _ := ioutil.ReadFile(*fileName)
 
-	initKagome()
-	analyzeText(string(bytes))
+	gobFile, err := os.Open("file.gob")
+	defer gobFile.Close()
+	if err != nil {
+		initKagome()
+		analyzeText(string(bytes))
+	} else {
+		dec := gob.NewDecoder(gobFile)
+		dec.Decode(&miniTokenList)
+	}
 
 	if err := ui.Init(); err != nil {
 		log.Fatalf("failed to initialize termui: %v", err)
 	}
 	defer ui.Close()
 
+	setupKnownWordList()
+	syncAnkiWords()
 	setupWidgets()
 	setupGrid()
 	ui.Render(grid)
