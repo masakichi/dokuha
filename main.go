@@ -44,7 +44,7 @@ var (
 
 	knownWordList     = []string{}
 	ankiWordList      = []string{}
-	displayKnownWords = false
+	displayKnownWords = true
 )
 
 type miniToken struct {
@@ -200,9 +200,9 @@ func applyRowsToWidget(w *widgets.List, tokens []*miniToken, verbose bool) {
 				}
 			}
 			if verbose {
-				rv = append(rv, fmt.Sprintf("%s (%s・%s・%s・%d)", t.SimpleLemma(), t.Yomi, t.Pos, t.Goshu, t.Count))
+				rv = append(rv, fmt.Sprintf("%s (%s・%s・%d)", t.SimpleLemma(), t.Pos, t.Goshu, t.Count))
 			} else {
-				rv = append(rv, fmt.Sprintf("%s (%s・%s・%d)", t.SimpleLemma(), t.Yomi, t.Goshu, t.Count))
+				rv = append(rv, fmt.Sprintf("%s (%s・%d)", t.SimpleLemma(), t.Goshu, t.Count))
 			}
 		}
 		return rv
