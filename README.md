@@ -23,7 +23,21 @@ TBD
 
 ## Keymap
 
-TBD
+```
+- q or <C-c>: quit
+- 1, 2, 3, 4, 5: switch to different widget
+- k or <Up>: up
+- j or <Down>: down
+- <C-u>: half page up
+- <C-d>: half page down
+- <C-f>: page down
+- <C-b>: page up
+- T: toggle display all words or unknown words only
+- gg: jump to top
+- G: jump to bottom
+- <Space>: select or deselect a word
+
+```
 
 ## Usage
 
