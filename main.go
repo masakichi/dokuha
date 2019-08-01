@@ -332,6 +332,7 @@ func eventLoop() {
 }
 
 func syncAnkiWords() {
+	//TODO(Gimo): make it configurable
 	dbPath := filepath.Join("/home/yuanji/.local/share/Anki2/Yuanji/", "collection.anki2")
 	utils.AnkiDB, _ = sql.Open("sqlite3", dbPath)
 	deckID := utils.GetAnkiDeckID("日本語")
@@ -340,15 +341,27 @@ func syncAnkiWords() {
 
 func main() {
 
-	fileName := flag.String("f", "", "file name")
+	if len(os.Args) < 2 {
+		log.Fatal("please give me a txt file")
+	}
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "%s: A TUI Japanese text inspection tool\n", appName)
+		fmt.Fprintf(os.Stderr, "Usage: %s %s\n\n", os.Args[0], "filename.txt")
+		flag.PrintDefaults()
+	}
+
 	flag.Parse()
-	bytes, _ := ioutil.ReadFile(*fileName)
+	bytes, err := ioutil.ReadFile(os.Args[1])
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	cacheName := fmt.Sprintf("%x", sha256.Sum256(bytes))
 	utils.CacheDir = utils.GetCacheDir(appName)
 	utils.EnsureDir(utils.CacheDir)
 
-	err := utils.LoadCache(cacheName, &miniTokenList)
+	err = utils.LoadCache(cacheName, &miniTokenList)
 	if err != nil {
 		initKagome()
 		analyzeText(string(bytes))
