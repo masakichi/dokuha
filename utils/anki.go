@@ -1,15 +1,18 @@
-package main
+package utils
 
 import (
+	"database/sql"
 	"encoding/json"
 )
 
-type ankiDeck struct {
+var AnkiDB *sql.DB
+
+type AnkiDeck struct {
 	Name string `json:"name"`
 }
 
-func getAnkiDeckID(deckName string) string {
-	row := ankiDB.QueryRow(
+func GetAnkiDeckID(deckName string) string {
+	row := AnkiDB.QueryRow(
 		`SELECT decks FROM col`,
 	)
 	var decksInfo string
@@ -17,7 +20,7 @@ func getAnkiDeckID(deckName string) string {
 	if decksInfo == "" {
 		return ""
 	}
-	var f map[string]ankiDeck
+	var f map[string]AnkiDeck
 	if err := json.Unmarshal([]byte(decksInfo), &f); err != nil {
 		panic(err)
 	}
@@ -29,8 +32,8 @@ func getAnkiDeckID(deckName string) string {
 	return ""
 }
 
-func getWordsByAnkiDeckID(deckID string) []string {
-	rows, err := ankiDB.Query(
+func GetWordsByAnkiDeckID(deckID string) []string {
+	rows, err := AnkiDB.Query(
 		`SELECT DISTINCT(n.sfld)
 		 FROM notes n
 		 LEFT JOIN cards c on n.id = c.nid

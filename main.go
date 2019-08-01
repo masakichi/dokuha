@@ -18,13 +18,12 @@ import (
 	"github.com/gizak/termui/v3/widgets"
 
 	"github.com/ikawaha/kagome/tokenizer"
+	"github.com/masakichi/dokuha/utils"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
 	kagome tokenizer.Tokenizer
-
-	ankiDB *sql.DB
 
 	grid *ui.Grid
 
@@ -335,9 +334,9 @@ func eventLoop() {
 
 func syncAnkiWords() {
 	dbPath := filepath.Join("/home/yuanji/.local/share/Anki2/Yuanji/", "collection.anki2")
-	ankiDB, _ = sql.Open("sqlite3", dbPath)
-	deckID := getAnkiDeckID("日本語")
-	ankiWordList = getWordsByAnkiDeckID(deckID)
+	utils.AnkiDB, _ = sql.Open("sqlite3", dbPath)
+	deckID := utils.GetAnkiDeckID("日本語")
+	ankiWordList = utils.GetWordsByAnkiDeckID(deckID)
 }
 
 func main() {
