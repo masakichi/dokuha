@@ -9,7 +9,7 @@ type ankiDeck struct {
 }
 
 func getAnkiDeckID(deckName string) string {
-	row := db.QueryRow(
+	row := ankiDB.QueryRow(
 		`SELECT decks FROM col`,
 	)
 	var decksInfo string
@@ -30,7 +30,7 @@ func getAnkiDeckID(deckName string) string {
 }
 
 func getWordsByAnkiDeckID(deckID string) []string {
-	rows, err := db.Query(
+	rows, err := ankiDB.Query(
 		`SELECT DISTINCT(n.sfld)
 		 FROM notes n
 		 LEFT JOIN cards c on n.id = c.nid

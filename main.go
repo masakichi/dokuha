@@ -24,7 +24,7 @@ import (
 var (
 	kagome tokenizer.Tokenizer
 
-	db *sql.DB
+	ankiDB *sql.DB
 
 	grid *ui.Grid
 
@@ -335,7 +335,7 @@ func eventLoop() {
 
 func syncAnkiWords() {
 	dbPath := filepath.Join("/home/yuanji/.local/share/Anki2/Yuanji/", "collection.anki2")
-	db, _ = sql.Open("sqlite3", dbPath)
+	ankiDB, _ = sql.Open("sqlite3", dbPath)
 	deckID := getAnkiDeckID("日本語")
 	ankiWordList = getWordsByAnkiDeckID(deckID)
 }
