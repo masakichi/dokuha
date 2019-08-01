@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
-	"encoding/gob"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -20,6 +20,10 @@ import (
 	"github.com/ikawaha/kagome/tokenizer"
 	"github.com/masakichi/dokuha/utils"
 	_ "github.com/mattn/go-sqlite3"
+)
+
+const (
+	appName = "dokuha"
 )
 
 var (
@@ -102,11 +106,6 @@ func analyzeText(s string) {
 		miniTokenList = append(miniTokenList, *v)
 	}
 	sort.Slice(miniTokenList, func(i, j int) bool { return miniTokenList[i].Count > miniTokenList[j].Count })
-
-	dataFile, _ := os.Create("file.gob")
-	defer dataFile.Close()
-	enc := gob.NewEncoder(dataFile)
-	enc.Encode(miniTokenList)
 }
 
 func initKagome() {
@@ -345,14 +344,15 @@ func main() {
 	flag.Parse()
 	bytes, _ := ioutil.ReadFile(*fileName)
 
-	gobFile, err := os.Open("file.gob")
-	defer gobFile.Close()
+	cacheName := fmt.Sprintf("%x", sha256.Sum256(bytes))
+	utils.CacheDir = utils.GetCacheDir(appName)
+	utils.EnsureDir(utils.CacheDir)
+
+	err := utils.LoadCache(cacheName, &miniTokenList)
 	if err != nil {
 		initKagome()
 		analyzeText(string(bytes))
-	} else {
-		dec := gob.NewDecoder(gobFile)
-		dec.Decode(&miniTokenList)
+		utils.SetCache(cacheName, miniTokenList)
 	}
 
 	if err := ui.Init(); err != nil {
